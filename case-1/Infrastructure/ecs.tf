@@ -1,13 +1,33 @@
+########################################
+# ECS CLUSTER
+########################################
+
 resource "aws_ecs_cluster" "main" {
   name = "${var.project_name}-cluster"
 }
+
+
+########################################
+# CLOUDWATCH LOG GROUP (REQUIRED)
+########################################
+
+resource "aws_cloudwatch_log_group" "ecs_logs" {
+  name              = "/ecs/${var.project_name}"
+  retention_in_days = 7
+}
+
+
+########################################
+# ECS TASK DEFINITION
+########################################
 
 resource "aws_ecs_task_definition" "task" {
   family                   = var.project_name
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
-  cpu                      = "256"
-  memory                   = "512"
+
+  cpu    = "256"
+  memory = "512"
 
   execution_role_arn = aws_iam_role.ecs_execution_role.arn
   task_role_arn      = aws_iam_role.ecs_task_role.arn
@@ -17,12 +37,31 @@ resource "aws_ecs_task_definition" "task" {
       name  = "app"
       image = "${aws_ecr_repository.app.repository_url}:latest"
 
-      portMappings = [{
-        containerPort = 3000
-      }]
+      essential = true
+
+      portMappings = [
+        {
+          containerPort = 3000
+          protocol      = "tcp"
+        }
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.ecs_logs.name
+          awslogs-region        = "us-east-1"
+          awslogs-stream-prefix = "ecs"
+        }
+      }
     }
   ])
 }
+
+
+########################################
+# ECS SERVICE
+########################################
 
 resource "aws_ecs_service" "service" {
   name            = "${var.project_name}-svc"
@@ -33,9 +72,11 @@ resource "aws_ecs_service" "service" {
   desired_count = 1
 
   network_configuration {
-    subnets         = module.vpc.private_subnets
+    subnets         = module.vpc.public_subnets
     security_groups = [aws_security_group.ecs_sg.id]
-    assign_public_ip = false
+
+    # IMPORTANT: required if no NAT Gateway
+    assign_public_ip = true
   }
 
   load_balancer {
@@ -44,5 +85,8 @@ resource "aws_ecs_service" "service" {
     container_port   = 3000
   }
 
-  depends_on = [aws_lb_listener.http]
+  depends_on = [
+    aws_lb_listener.http,
+    aws_lb_listener.https
+  ]
 }

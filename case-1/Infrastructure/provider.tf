@@ -2,12 +2,12 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "6.16.0"
+      version = "6.28.0"
     }
   }
   backend "s3" {
     bucket       = "terraform-mahesh" # my own s3 bucket
-    key          = "terraform.tfstate-vpc"
+    key          = "terraform.tfstate-resources"
     region       = "us-east-1"
     encrypt      = true
     use_lockfile = true

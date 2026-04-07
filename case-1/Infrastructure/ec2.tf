@@ -1,8 +1,8 @@
 resource "aws_instance" "bastion" {
-    ami = ami-0220d79f3f480ecf5
+    ami  = "ami-0220d79f3f480ecf5"
     instance_type = "t3.micro"
     vpc_security_group_ids = [aws_security_group.jenkins_sg.id]
-    subnet_id = module.vpc.public_subnets
+    subnet_id = module.vpc.public_subnets[0]
     
     root_block_device {
         volume_size = 50
@@ -12,7 +12,7 @@ resource "aws_instance" "bastion" {
     user_data = file("userdata.sh")
     
     tags = {
-        Name = Jenkins
+        Name = "Jenkins"
     } 
     
     }
