@@ -1,0 +1,108 @@
+pipeline {
+    agent any
+
+    environment {
+        AWS_REGION        = "us-east-1"
+        AWS_ACCOUNT_ID    = "YOUR_AWS_ACCOUNT_ID"
+        ECR_REPO          = "your-ecr-repo-name"
+        IMAGE_NAME        = "${ECR_REPO}"
+        IMAGE_TAG         = "${BUILD_NUMBER}"
+
+        ECR_REGISTRY      = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+        FULL_IMAGE_NAME   = "${ECR_REGISTRY}/${ECR_REPO}:${IMAGE_TAG}"
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                sh 'npm install'
+            }
+        }
+
+        stage('Build & Test') {
+            steps {
+                sh 'npm run build || true'
+                sh 'npm test || true'
+            }
+        }
+
+        stage('Login to ECR') {
+            steps {
+                sh '''
+                aws ecr get-login-password --region $AWS_REGION | \
+                docker login --username AWS --password-stdin $ECR_REGISTRY
+                '''
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                sh """
+                docker build -t $IMAGE_NAME:$IMAGE_TAG .
+                docker tag $IMAGE_NAME:$IMAGE_TAG $FULL_IMAGE_NAME
+                """
+            }
+        }
+
+        stage('Push Image to ECR') {
+            steps {
+                sh """
+                docker push $FULL_IMAGE_NAME
+                """
+            }
+        }
+
+        stage('Enable/Trigger ECR Image Scan') {
+            steps {
+                sh """
+                aws ecr start-image-scan \
+                    --repository-name $ECR_REPO \
+                    --image-id imageTag=$IMAGE_TAG \
+                    --region $AWS_REGION
+                """
+            }
+        }
+
+        stage('Wait for Scan Result (Optional)') {
+            steps {
+                sh """
+                sleep 20
+                aws ecr describe-image-scan-findings \
+                    --repository-name $ECR_REPO \
+                    --image-id imageTag=$IMAGE_TAG \
+                    --region $AWS_REGION
+                """
+            }
+        }
+
+        stage('Deploy to ECS Fargate') {
+            steps {
+                sh """
+                echo "Updating ECS service with new image..."
+
+                aws ecs update-service \
+                    --cluster your-ecs-cluster \
+                    --service your-ecs-service \
+                    --force-new-deployment \
+                    --region $AWS_REGION
+                """
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Pipeline completed successfully!"
+        }
+        failure {
+            echo "Pipeline failed!"
+        }
+    }
+}

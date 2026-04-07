@@ -1,0 +1,28 @@
+# Stage 1: Build stage
+FROM node:18-alpine AS builder
+
+WORKDIR /app
+
+COPY package.json package-lock.json* ./
+RUN npm install
+
+COPY . .
+
+# Optional: build step (if using frameworks like React, Next.js, etc.)
+# RUN npm run build
+
+
+# Stage 2: Production stage
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Copy only necessary files from builder
+COPY --from=builder /app /app
+
+# Install only production dependencies
+RUN npm install --omit=dev
+
+EXPOSE 3000
+
+CMD ["npm", "start"]
