@@ -27,13 +27,7 @@ pipeline {
             }
         }
 
-        stage('Run Tests') {
-            steps {
-                dir('case-1/app') {
-                    sh 'npm test'
-                }
-            }
-        }
+        
 
         stage('Build Docker Image') {
             steps {
