@@ -1,108 +1,165 @@
 pipeline {
-    agent any
+agent any
 
-    environment {
-        AWS_REGION        = "us-east-1"
-        AWS_ACCOUNT_ID    = "YOUR_AWS_ACCOUNT_ID"
-        ECR_REPO          = "your-ecr-repo-name"
-        IMAGE_NAME        = "${ECR_REPO}"
-        IMAGE_TAG         = "${BUILD_NUMBER}"
+```
+environment {
+    AWS_REGION   = "us-east-1"
+    ECR_REPO     = "your-ecr-repo-name"
+    ACCOUNT_ID   = "YOUR_AWS_ACCOUNT_ID"
+    IMAGE_TAG    = "${BUILD_NUMBER}"
+    CLUSTER_NAME = "secure-jwt-app-cluster"
+    SERVICE_NAME = "secure-jwt-app-cluster-svc"
+}
 
-        ECR_REGISTRY      = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-        FULL_IMAGE_NAME   = "${ECR_REGISTRY}/${ECR_REPO}:${IMAGE_TAG}"
+stages {
+
+    stage('Checkout Code') {
+        steps {
+            git branch: 'main',
+            url: 'https://github.com/Mahesh8120/DevOps_Assignment_MaheshJ.git'
+        }
     }
 
-    stages {
-
-        stage('Checkout') {
-            steps {
-                checkout scm
-            }
+    stage('Install Dependencies') {
+        steps {
+            sh 'npm install'
         }
+    }
 
-        stage('Install Dependencies') {
-            steps {
-                sh 'npm install'
-            }
+    stage('Run Tests') {
+        steps {
+            sh 'npm test'
         }
+    }
 
-        stage('Build & Test') {
-            steps {
-                sh 'npm run build || true'
-                sh 'npm test || true'
-            }
+    stage('Build Docker Image') {
+        steps {
+            sh 'docker build -t $ECR_REPO:$IMAGE_TAG .'
         }
+    }
 
-        stage('Login to ECR') {
-            steps {
+    stage('Push Image to ECR') {
+        steps {
+            withCredentials([[
+                $class: 'AmazonWebServicesCredentialsBinding',
+                credentialsId: 'aws-creds'
+            ]]) {
                 sh '''
                 aws ecr get-login-password --region $AWS_REGION | \
-                docker login --username AWS --password-stdin $ECR_REGISTRY
+                docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+                docker tag $ECR_REPO:$IMAGE_TAG \
+                $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:$IMAGE_TAG
+
+                docker push $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:$IMAGE_TAG
                 '''
             }
         }
+    }
 
-        stage('Build Docker Image') {
-            steps {
-                sh """
-                docker build -t $IMAGE_NAME:$IMAGE_TAG .
-                docker tag $IMAGE_NAME:$IMAGE_TAG $FULL_IMAGE_NAME
-                """
-            }
-        }
-
-        stage('Push Image to ECR') {
-            steps {
-                sh """
-                docker push $FULL_IMAGE_NAME
-                """
-            }
-        }
-
-        stage('Enable/Trigger ECR Image Scan') {
-            steps {
-                sh """
+    stage('Start Image Scan') {
+        steps {
+            withCredentials([[
+                $class: 'AmazonWebServicesCredentialsBinding',
+                credentialsId: 'aws-creds'
+            ]]) {
+                sh '''
+                echo "Starting ECR image scan..."
                 aws ecr start-image-scan \
-                    --repository-name $ECR_REPO \
-                    --image-id imageTag=$IMAGE_TAG \
-                    --region $AWS_REGION
-                """
+                  --repository-name $ECR_REPO \
+                  --image-id imageTag=$IMAGE_TAG \
+                  --region $AWS_REGION || true
+                '''
             }
         }
+    }
 
-        stage('Wait for Scan Result (Optional)') {
-            steps {
-                sh """
-                sleep 20
+    stage('Wait for Scan Result') {
+        steps {
+            withCredentials([[
+                $class: 'AmazonWebServicesCredentialsBinding',
+                credentialsId: 'aws-creds'
+            ]]) {
+                sh '''
+                echo "Waiting for ECR scan to complete..."
+
+                while true; do
+                  STATUS=$(aws ecr describe-image-scan-findings \
+                    --repository-name $ECR_REPO \
+                    --image-id imageTag=$IMAGE_TAG \
+                    --region $AWS_REGION \
+                    --query 'imageScanStatus.status' \
+                    --output text)
+
+                  echo "Current scan status: $STATUS"
+
+                  if [ "$STATUS" = "COMPLETE" ]; then
+                    echo "Scan completed!"
+                    break
+                  elif [ "$STATUS" = "FAILED" ]; then
+                    echo "Scan failed!"
+                    exit 1
+                  else
+                    sleep 10
+                  fi
+                done
+
                 aws ecr describe-image-scan-findings \
-                    --repository-name $ECR_REPO \
-                    --image-id imageTag=$IMAGE_TAG \
-                    --region $AWS_REGION
-                """
+                  --repository-name $ECR_REPO \
+                  --image-id imageTag=$IMAGE_TAG \
+                  --region $AWS_REGION > scan.json
+
+                cat scan.json
+                '''
             }
         }
+    }
 
-        stage('Deploy to ECS Fargate') {
-            steps {
-                sh """
-                echo "Updating ECS service with new image..."
+    stage('Fail on High/Critical Vulnerabilities') {
+        steps {
+            script {
+                def result = sh(
+                    script: '''
+                    cat scan.json | grep -E '"CRITICAL"|"HIGH"' || true
+                    ''',
+                    returnStdout: true
+                ).trim()
 
+                if (result) {
+                    error "❌ High or Critical vulnerabilities found! Failing pipeline."
+                } else {
+                    echo "✅ No high/critical vulnerabilities found."
+                }
+            }
+        }
+    }
+
+    stage('Deploy to ECS Fargate') {
+        steps {
+            withCredentials([[
+                $class: 'AmazonWebServicesCredentialsBinding',
+                credentialsId: 'aws-creds'
+            ]]) {
+                sh '''
                 aws ecs update-service \
-                    --cluster your-ecs-cluster \
-                    --service your-ecs-service \
-                    --force-new-deployment \
-                    --region $AWS_REGION
-                """
+                  --cluster $CLUSTER_NAME \
+                  --service $SERVICE_NAME \
+                  --force-new-deployment \
+                  --region $AWS_REGION
+                '''
             }
         }
     }
+}
 
-    post {
-        success {
-            echo "Pipeline completed successfully!"
-        }
-        failure {
-            echo "Pipeline failed!"
-        }
+post {
+    success {
+        echo "Deployment Successful 🚀"
     }
+    failure {
+        echo "Pipeline Failed ❌"
+    }
+}
+```
+
 }
