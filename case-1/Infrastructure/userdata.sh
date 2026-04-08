@@ -20,7 +20,7 @@ dnf update -y
 # =========================
 # INSTALL JAVA (Jenkins dependency)
 # =========================
-dnf install -y java-17-amazon-corretto
+dnf install -y java-17
 
 
 # =========================

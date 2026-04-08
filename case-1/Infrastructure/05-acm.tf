@@ -1,10 +1,16 @@
 resource "aws_acm_certificate" "cert" {
-  domain_name       = "example.com"
+  domain_name       = "sitaram.icu"
   validation_method = "DNS"
 
   lifecycle {
     create_before_destroy = true
   }
+}
+
+# Get hosted zone
+data "aws_route53_zone" "main" {
+  name         = "sitaram.icu"
+  private_zone = false
 }
 
 # Route53 validation records
@@ -13,17 +19,23 @@ resource "aws_route53_record" "cert_validation" {
     for dvo in aws_acm_certificate.cert.domain_validation_options : dvo.domain_name => dvo
   }
 
-  zone_id = aws_route53_record.alb_dns.zone_id
+  zone_id = data.aws_route53_zone.main.zone_id
   name    = each.value.resource_record_name
   type    = each.value.resource_record_type
   records = [each.value.resource_record_value]
   ttl     = 60
 }
 
-# Certificate validation (THIS IS REQUIRED)
+# Certificate validation
 resource "aws_acm_certificate_validation" "cert_validation" {
-  certificate_arn         = aws_acm_certificate.cert.arn
+  certificate_arn = aws_acm_certificate.cert.arn
+
   validation_record_fqdns = [
     for record in aws_route53_record.cert_validation : record.fqdn
   ]
+
+  # Increase timeout to avoid failure
+  timeouts {
+    create = "25m"
+  }
 }

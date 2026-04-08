@@ -74,7 +74,7 @@ resource "aws_ecs_service" "service" {
 
     security_groups = [aws_security_group.ecs_sg.id]
 
-    # ❌ Disable public IP
+    #  Disable public IP
     assign_public_ip = false
   }
 
