@@ -13,7 +13,7 @@ resource "aws_route53_record" "cert_validation" {
     for dvo in aws_acm_certificate.cert.domain_validation_options : dvo.domain_name => dvo
   }
 
-  zone_id = aws_route53_zone.main.zone_id
+  zone_id = aws_route53_record.alb_dns.zone_id
   name    = each.value.resource_record_name
   type    = each.value.resource_record_type
   records = [each.value.resource_record_value]
