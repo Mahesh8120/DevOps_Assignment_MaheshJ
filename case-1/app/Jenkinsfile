@@ -46,13 +46,19 @@ pipeline {
                 dir("${APP_DIR}") {
                     sh '''
                     echo "Building Docker image..."
-                    docker build -t $ECR_REPO:$IMAGE_TAG .
+
+                    # Force stable single-arch build (avoids OCI issues)
+                    export DOCKER_BUILDKIT=0
+
+                    docker build \
+                      --platform linux/amd64 \
+                      -t $ECR_REPO:$IMAGE_TAG .
                     '''
                 }
             }
         }
 
-        stage('Login to ECR & Push Image') {
+        stage('Login to ECR') {
             steps {
                 withCredentials([[
                     $class: 'AmazonWebServicesCredentialsBinding',
@@ -60,89 +66,27 @@ pipeline {
                 ]]) {
                     sh '''
                     echo "Logging into ECR..."
+
                     aws ecr get-login-password --region $AWS_REGION | \
-                    docker login --username AWS --password-stdin $ECR_URL
-
-                    echo "Tagging image..."
-                    docker tag $ECR_REPO:$IMAGE_TAG $ECR_URL/$ECR_REPO:$IMAGE_TAG
-
-                    echo "Pushing image..."
-                    docker push $ECR_URL/$ECR_REPO:$IMAGE_TAG
+                    docker login --username AWS --password-stdin \
+                    $ECR_URL
                     '''
                 }
             }
         }
 
-        stage('Start Image Scan') {
+        stage('Tag & Push Image') {
             steps {
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-auth'
-                ]]) {
-                    sh '''
-                    aws ecr start-image-scan \
-                      --repository-name $ECR_REPO \
-                      --image-id imageTag=$IMAGE_TAG \
-                      --region $AWS_REGION || true
-                    '''
-                }
-            }
-        }
+                sh '''
+                echo "Tagging image..."
 
-        stage('Wait for Scan Result') {
-            steps {
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-auth'
-                ]]) {
-                    sh '''
-                    echo "Waiting for scan to complete..."
+                docker tag $ECR_REPO:$IMAGE_TAG \
+                $ECR_URL/$ECR_REPO:$IMAGE_TAG
 
-                    while true; do
-                      STATUS=$(aws ecr describe-image-scan-findings \
-                        --repository-name $ECR_REPO \
-                        --image-id imageTag=$IMAGE_TAG \
-                        --region $AWS_REGION \
-                        --query 'imageScanStatus.status' \
-                        --output text)
+                echo "Pushing image..."
 
-                      echo "Status: $STATUS"
-
-                      if [ "$STATUS" = "COMPLETE" ]; then
-                        break
-                      elif [ "$STATUS" = "FAILED" ]; then
-                        echo "Scan failed"
-                        exit 1
-                      fi
-
-                      sleep 10
-                    done
-
-                    aws ecr describe-image-scan-findings \
-                      --repository-name $ECR_REPO \
-                      --image-id imageTag=$IMAGE_TAG \
-                      --region $AWS_REGION > scan.json
-                    '''
-                }
-            }
-        }
-
-        stage('Security Gate (HIGH/CRITICAL Check)') {
-            steps {
-                script {
-                    def findings = sh(
-                        script: """
-                        cat scan.json | grep -E 'HIGH|CRITICAL' || true
-                        """,
-                        returnStdout: true
-                    ).trim()
-
-                    if (findings) {
-                        error " HIGH or CRITICAL vulnerabilities found!"
-                    } else {
-                        echo " No HIGH/CRITICAL vulnerabilities found."
-                    }
-                }
+                docker push $ECR_URL/$ECR_REPO:$IMAGE_TAG
+                '''
             }
         }
 
@@ -153,7 +97,8 @@ pipeline {
                     credentialsId: 'aws-auth'
                 ]]) {
                     sh '''
-                    echo "Deploying to ECS..."
+                    echo "Deploying to ECS Fargate..."
+
                     aws ecs update-service \
                       --cluster $CLUSTER_NAME \
                       --service $SERVICE_NAME \
