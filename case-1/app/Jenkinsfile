@@ -21,25 +21,31 @@ pipeline {
 
         stage('Install Dependencies') {
             steps {
-                sh 'npm install'
+                dir('case-1/app') {
+                    sh 'npm install'
+                }
             }
         }
 
         stage('Run Tests') {
             steps {
-                sh 'npm test'
+                dir('case-1/app') {
+                    sh 'npm test'
+                }
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                sh 'docker build -t $ECR_REPO:$IMAGE_TAG .'
+                dir('case-1/app') {
+                    sh 'docker build -t $ECR_REPO:$IMAGE_TAG .'
+                }
             }
         }
 
         stage('Push Image to ECR') {
             steps {
-                withCredentials([[
+                withCredentials([[ 
                     $class: 'AmazonWebServicesCredentialsBinding',
                     credentialsId: 'aws-auth'
                 ]]) {
@@ -58,13 +64,11 @@ pipeline {
 
         stage('Start Image Scan') {
             steps {
-                withCredentials([[
+                withCredentials([[ 
                     $class: 'AmazonWebServicesCredentialsBinding',
                     credentialsId: 'aws-auth'
                 ]]) {
                     sh '''
-                    echo "Starting ECR image scan..."
-
                     aws ecr start-image-scan \
                       --repository-name $ECR_REPO \
                       --image-id imageTag=$IMAGE_TAG \
@@ -76,12 +80,12 @@ pipeline {
 
         stage('Wait for Scan Result') {
             steps {
-                withCredentials([[
+                withCredentials([[ 
                     $class: 'AmazonWebServicesCredentialsBinding',
                     credentialsId: 'aws-auth'
                 ]]) {
                     sh '''
-                    echo "Waiting for ECR scan..."
+                    echo "Waiting for scan..."
 
                     while true; do
                       STATUS=$(aws ecr describe-image-scan-findings \
@@ -97,17 +101,15 @@ pipeline {
                         break
                       elif [ "$STATUS" = "FAILED" ]; then
                         exit 1
-                      else
-                        sleep 10
                       fi
+
+                      sleep 10
                     done
 
                     aws ecr describe-image-scan-findings \
                       --repository-name $ECR_REPO \
                       --image-id imageTag=$IMAGE_TAG \
                       --region $AWS_REGION > scan.json
-
-                    cat scan.json
                     '''
                 }
             }
@@ -116,13 +118,18 @@ pipeline {
         stage('Fail on High/Critical Vulnerabilities') {
             steps {
                 script {
-                    def result = sh(
-                        script: "cat scan.json | grep -E 'CRITICAL|HIGH' || true",
+                    def highCount = sh(
+                        script: "cat scan.json | grep -i 'HIGH' | wc -l",
                         returnStdout: true
-                    ).trim()
+                    ).trim().toInteger()
 
-                    if (result) {
-                        error "❌ High or Critical vulnerabilities found!"
+                    def criticalCount = sh(
+                        script: "cat scan.json | grep -i 'CRITICAL' | wc -l",
+                        returnStdout: true
+                    ).trim().toInteger()
+
+                    if (highCount > 0 || criticalCount > 0) {
+                        error "❌ High/Critical vulnerabilities found!"
                     } else {
                         echo "✅ No high/critical vulnerabilities found."
                     }
@@ -132,7 +139,7 @@ pipeline {
 
         stage('Deploy to ECS Fargate') {
             steps {
-                withCredentials([[
+                withCredentials([[ 
                     $class: 'AmazonWebServicesCredentialsBinding',
                     credentialsId: 'aws-auth'
                 ]]) {
