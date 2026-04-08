@@ -8,6 +8,8 @@ pipeline {
         IMAGE_TAG    = "${BUILD_NUMBER}"
         CLUSTER_NAME = "secure-jwt-app-cluster"
         SERVICE_NAME = "secure-jwt-app-cluster-svc"
+        APP_DIR      = "case-1/app"
+        ECR_URL      = "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
     }
 
     stages {
@@ -19,38 +21,53 @@ pipeline {
             }
         }
 
-        stage('Install Dependencies') {
+        stage('Validate Docker') {
             steps {
-                dir('case-1/app') {
-                    sh 'npm install'
-                }
+                sh '''
+                echo "Checking Docker..."
+                docker version || exit 1
+                '''
             }
         }
 
-        
+        stage('Install Dependencies') {
+            steps {
+                dir("${APP_DIR}") {
+                    sh '''
+                    echo "Installing dependencies..."
+                    npm install
+                    '''
+                }
+            }
+        }
 
         stage('Build Docker Image') {
             steps {
-                dir('case-1/app') {
-                    sh 'docker build -t $ECR_REPO:$IMAGE_TAG .'
+                dir("${APP_DIR}") {
+                    sh '''
+                    echo "Building Docker image..."
+                    docker build -t $ECR_REPO:$IMAGE_TAG .
+                    '''
                 }
             }
         }
 
-        stage('Push Image to ECR') {
+        stage('Login to ECR & Push Image') {
             steps {
-                withCredentials([[ 
+                withCredentials([[
                     $class: 'AmazonWebServicesCredentialsBinding',
                     credentialsId: 'aws-auth'
                 ]]) {
                     sh '''
+                    echo "Logging into ECR..."
                     aws ecr get-login-password --region $AWS_REGION | \
-                    docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+                    docker login --username AWS --password-stdin $ECR_URL
 
-                    docker tag $ECR_REPO:$IMAGE_TAG \
-                    $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:$IMAGE_TAG
+                    echo "Tagging image..."
+                    docker tag $ECR_REPO:$IMAGE_TAG $ECR_URL/$ECR_REPO:$IMAGE_TAG
 
-                    docker push $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:$IMAGE_TAG
+                    echo "Pushing image..."
+                    docker push $ECR_URL/$ECR_REPO:$IMAGE_TAG
                     '''
                 }
             }
@@ -58,7 +75,7 @@ pipeline {
 
         stage('Start Image Scan') {
             steps {
-                withCredentials([[ 
+                withCredentials([[
                     $class: 'AmazonWebServicesCredentialsBinding',
                     credentialsId: 'aws-auth'
                 ]]) {
@@ -74,12 +91,12 @@ pipeline {
 
         stage('Wait for Scan Result') {
             steps {
-                withCredentials([[ 
+                withCredentials([[
                     $class: 'AmazonWebServicesCredentialsBinding',
                     credentialsId: 'aws-auth'
                 ]]) {
                     sh '''
-                    echo "Waiting for scan..."
+                    echo "Waiting for scan to complete..."
 
                     while true; do
                       STATUS=$(aws ecr describe-image-scan-findings \
@@ -94,6 +111,7 @@ pipeline {
                       if [ "$STATUS" = "COMPLETE" ]; then
                         break
                       elif [ "$STATUS" = "FAILED" ]; then
+                        echo "Scan failed"
                         exit 1
                       fi
 
@@ -109,23 +127,20 @@ pipeline {
             }
         }
 
-        stage('Fail on High/Critical Vulnerabilities') {
+        stage('Security Gate (HIGH/CRITICAL Check)') {
             steps {
                 script {
-                    def highCount = sh(
-                        script: "cat scan.json | grep -i 'HIGH' | wc -l",
+                    def findings = sh(
+                        script: """
+                        cat scan.json | grep -E 'HIGH|CRITICAL' || true
+                        """,
                         returnStdout: true
-                    ).trim().toInteger()
+                    ).trim()
 
-                    def criticalCount = sh(
-                        script: "cat scan.json | grep -i 'CRITICAL' | wc -l",
-                        returnStdout: true
-                    ).trim().toInteger()
-
-                    if (highCount > 0 || criticalCount > 0) {
-                        error "❌ High/Critical vulnerabilities found!"
+                    if (findings) {
+                        error " HIGH or CRITICAL vulnerabilities found!"
                     } else {
-                        echo "✅ No high/critical vulnerabilities found."
+                        echo " No HIGH/CRITICAL vulnerabilities found."
                     }
                 }
             }
@@ -133,11 +148,12 @@ pipeline {
 
         stage('Deploy to ECS Fargate') {
             steps {
-                withCredentials([[ 
+                withCredentials([[
                     $class: 'AmazonWebServicesCredentialsBinding',
                     credentialsId: 'aws-auth'
                 ]]) {
                     sh '''
+                    echo "Deploying to ECS..."
                     aws ecs update-service \
                       --cluster $CLUSTER_NAME \
                       --service $SERVICE_NAME \
