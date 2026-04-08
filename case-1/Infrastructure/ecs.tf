@@ -6,16 +6,14 @@ resource "aws_ecs_cluster" "main" {
   name = "${var.project_name}-cluster"
 }
 
-
 ########################################
-# CLOUDWATCH LOG GROUP (REQUIRED)
+# CLOUDWATCH LOG GROUP
 ########################################
 
 resource "aws_cloudwatch_log_group" "ecs_logs" {
   name              = "/ecs/${var.project_name}"
-  retention_in_days = 7
+  retention_in_days = 3
 }
-
 
 ########################################
 # ECS TASK DEFINITION
@@ -58,9 +56,8 @@ resource "aws_ecs_task_definition" "task" {
   ])
 }
 
-
 ########################################
-# ECS SERVICE
+# ECS SERVICE (PRIVATE & SECURE)
 ########################################
 
 resource "aws_ecs_service" "service" {
@@ -72,11 +69,13 @@ resource "aws_ecs_service" "service" {
   desired_count = 1
 
   network_configuration {
-    subnets         = module.vpc.public_subnets
+    # ✅ Use PRIVATE subnets
+    subnets = module.vpc.private_subnets
+
     security_groups = [aws_security_group.ecs_sg.id]
 
-    # IMPORTANT: required if no NAT Gateway
-    assign_public_ip = true
+    # ❌ Disable public IP
+    assign_public_ip = false
   }
 
   load_balancer {
