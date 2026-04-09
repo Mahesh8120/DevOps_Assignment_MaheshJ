@@ -1,0 +1,41 @@
+############################
+# Terraform
+############################
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+crash.*.log
+
+############################
+# AWS credentials
+############################
+.aws/
+credentials
+*.pem
+*.key
+
+############################
+# IDE / OS files
+############################
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+############################
+# Logs
+############################
+*.log
+
+############################
+# Node / frontend (if used)
+############################
+node_modules/
+
+############################
+# Docs folder (DO NOT PUSH)
+############################
+docs/
+proofs/

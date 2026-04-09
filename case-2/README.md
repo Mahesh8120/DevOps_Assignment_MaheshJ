@@ -1,135 +1,55 @@
-# Secure Public Bucket Storage Architecture (AWS)
+# Secure Public Bucket Storage (AWS)
 
-## 📌 Objective
+## 📌 Overview
 
-Design and implement a secure architecture to serve public static content from object storage while:
-
-* Preventing direct access to storage URLs
-* Enforcing strict access controls
-* Ensuring scalability for high request volumes
-* Routing all traffic through a load balancer
+This project implements a secure architecture for serving static content using AWS services while preventing direct access to storage.
 
 ---
 
-## 🏗️ Architecture Overview
+## 🏗 Architecture
 
-This solution uses the following AWS services:
-
-* Amazon CloudFront (CDN)
-* Application Load Balancer (ALB)
-* ECS Fargate (Proxy Layer)
-* Amazon S3 (Private Bucket)
-* IAM (Access Control)
-* VPC (Network Isolation)
-
-### 🔄 Request Flow
-
-1. User sends request to application domain
-2. DNS routes traffic to CloudFront
-3. CloudFront:
-
-   * Returns cached content (if available)
-   * Otherwise forwards request to ALB
-4. ALB routes traffic to ECS Fargate service
-5. ECS (proxy service):
-
-   * Authenticates using IAM role
-   * Fetches object from S3 using AWS SDK
-6. Response flows back through ALB → CloudFront → User
-7. CloudFront caches the response
+* Amazon CloudFront (CDN + Load Balancer layer)
+* Private Amazon S3 Bucket
+* Route53 DNS
 
 ---
 
-## 🔐 Security Design
+## 🔐 Security Controls
 
-### 1. No Direct S3 Access
+### 1. Access Control
 
-* S3 bucket is fully private
-* Public access is blocked at bucket level
-* No public URLs are accessible
+* S3 bucket is private
+* Public access blocked
+* Only CloudFront can access via OAC (SigV4)
 
-### 2. Controlled Access via Load Balancer
+### 2. Signed URLs
 
-* All traffic must pass through:
+* CloudFront signed URLs enabled
+* Restricts user-level access
 
-  * CloudFront → ALB → ECS
-* Direct access to ECS is restricted via security groups
+### 3. Encryption
 
-### 3. IAM-Based Authentication
+* Server-side encryption (AES256)
 
-* ECS task uses IAM role to access S3
-* No static credentials are used
+### 4. Versioning
 
----
+* Enabled for recovery and rollback
 
-## 🔒 Implemented Security Controls
+### 5. Logging
 
-### ✅ Bucket Policies
+* Access logs stored in separate S3 bucket
 
-* Only ECS task role can read objects
-* Explicit deny for `s3:ListBucket` (prevents enumeration)
+### 6. Lifecycle Policy
 
-### ✅ Encryption (Data at Rest)
+* Objects expire after 30 days
 
-* Server-side encryption enabled (SSE-S3)
+### 7. Geo Restriction
 
-### ✅ Versioning
-
-* Enabled for object recovery and rollback
-
-### ✅ Access Logging
-
-* S3 access logs enabled
-* ALB access logs enabled
-
-### ✅ Lifecycle Policies
-
-* Old data automatically moved to archival storage
-
-### ✅ Hotlink Protection
-
-* Implemented using CloudFront policies / headers
-
-### ✅ Geo Restrictions
-
-* Configurable via CloudFront
+* Access restricted to specific regions
 
 ---
 
-## 🌐 CDN Configuration
-
-* CloudFront is placed in front of ALB
-* Optimized caching policies:
-
-  * Images → long TTL (24 hours)
-  * CSS/JS → medium TTL (1 hour)
-  * HTML → short TTL (5 minutes)
-
-### Cache Invalidation Strategy
-
-* Use versioned file names (recommended)
-* OR manual invalidation:
-
-  ```
-  aws cloudfront create-invalidation --paths "/*"
-  ```
-
----
-
-## ⚙️ Infrastructure Setup (Terraform)
-
-### Components Provisioned
-
-* VPC with public and private subnets
-* Application Load Balancer (public)
-* ECS Fargate service (private subnets)
-* IAM roles and policies
-* Private S3 bucket
-* CloudFront distribution
-
----
-
-## 🚀 Deployment Steps
+## 🚀 Setup Instructions
 
 ### 1. Initialize Terraform
 
@@ -137,127 +57,56 @@ This solution uses the following AWS services:
 terraform init
 ```
 
-### 2. Plan Infrastructure
+### 2. Apply Infrastructure
 
 ```
-terraform plan
+terraform apply -auto-approve
 ```
 
-### 3. Apply Configuration
+### 3. Upload Static Content
+
+Ensure files exist:
 
 ```
-terraform apply
+static/index.html
+static/style.css
 ```
 
-### 4. Upload Static Content
+### 4. Access Application
 
-```
-aws s3 cp ./static-site s3://<bucket-name>/ --recursive
-```
+Use:
+
+* CloudFront URL OR
+* Custom domain (Route53)
 
 ---
 
-## 🧪 Testing
+## 🔄 Cache Invalidation Strategy
 
-### Health Check
-
-```
-GET /health
-```
-
-### Fetch Content
-
-```
-GET /files/<filename>
-```
-
-### Validation
-
-* Direct S3 URL → ❌ Access Denied
-* CloudFront URL → ✅ Works
+* Preferred: versioned files (e.g., style.v1.css)
+* Alternative: manual invalidation via AWS CLI
 
 ---
 
-## 📈 Performance Considerations
+## ⚡ Performance Optimization
 
-* CloudFront handles global caching
-* ECS scales horizontally (Fargate auto-scaling)
-* S3 provides virtually unlimited scalability
+* CloudFront edge caching
+* Optimized cache policy
+* Reduced origin calls
 
 ---
 
 ## 💰 Cost Optimization
 
-* CDN caching reduces backend load
-* Lifecycle policies reduce storage costs
-* Minimal ECS resources used (optimized CPU/memory)
-* Optional: Use Fargate Spot for lower cost
+* S3 lifecycle policies reduce storage cost
+* CloudFront caching reduces data transfer
+* No EC2 → lower compute cost
 
 ---
 
-## ⚠️ Design Considerations
+## ✅ Outcome
 
-### Why ECS Proxy?
-
-Application Load Balancer cannot directly authenticate to S3.
-
-To meet the requirement:
-
-> “Load balancer must authenticate to backend bucket”
-
-We introduced ECS Fargate as a secure proxy layer that:
-
-* Uses IAM role for authentication
-* Fetches objects from S3
-* Returns responses to ALB
-
----
-
-## 🔄 Alternative Approach (Optimization)
-
-In real-world production systems, this architecture can be simplified:
-
-* Replace ALB + ECS with direct CloudFront → S3 integration
-* Use Origin Access Control (OAC)
-
-This reduces:
-
-* Latency
-* Cost
-* Complexity
-
----
-
-## 📊 Cost Estimate (Approximate)
-
-| Component   | Cost Driver              |
-| ----------- | ------------------------ |
-| CloudFront  | Data transfer + requests |
-| ECS Fargate | CPU + memory usage       |
-| ALB         | LCU usage                |
-| S3          | Storage + GET requests   |
-
----
-
-## 📌 Conclusion
-
-This architecture:
-
-* Ensures **no direct access to S3**
-* Enforces **strict access via load balancer**
-* Supports **high scalability (thousands of requests/sec)**
-* Implements **multiple security best practices**
-* Fully satisfies all assignment requirements
-
----
-
-## 📎 Deliverables Included
-
-* Terraform code
-* Architecture diagram
-* Secure S3 configuration
-* Load balancer setup
-* CDN configuration
-* Security controls implementation
-
----
+* Secure content delivery
+* High scalability
+* No direct S3 access
+* Optimized performance and cost
