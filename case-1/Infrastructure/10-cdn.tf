@@ -44,11 +44,14 @@ resource "aws_cloudfront_distribution" "cdn" {
   ########################################
   # RESTRICTIONS
   ########################################
-  restrictions {
-    geo_restriction {
-      restriction_type = "none"
-    }
+ 
+    restrictions {
+  geo_restriction {
+    restriction_type = "whitelist"
+    locations        = ["IN"]
   }
+}
+
 
   ########################################
   # SSL CERTIFICATE
