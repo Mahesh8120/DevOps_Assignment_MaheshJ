@@ -68,8 +68,8 @@ terraform apply -auto-approve
 Ensure files exist:
 
 ```
-static/index.html
-static/style.css
+content/index.html
+content/style.css
 ```
 
 ### 4. Access Application
