@@ -153,11 +153,11 @@ resource "aws_cloudfront_distribution" "cdn" {
     allowed_methods = ["GET", "HEAD"]
     cached_methods  = ["GET", "HEAD"]
 
-    cache_policy_id = "658327ea-f89d-4fab-a63d-7e88639e58f6"
+    cache_policy_id = aws_cloudfront_cache_policy.static_optimized.id
     compress        = true
   }
 
-  # ✅ FIXED (removed geo restriction for testing)
+  #  FIXED (removed geo restriction for testing)
     restrictions {
   geo_restriction {
     restriction_type = "whitelist"
@@ -179,6 +179,32 @@ resource "aws_cloudfront_invalidation" "invalidate_all" {
 
   paths = ["/*"]
 }
+
+resource "aws_cloudfront_cache_policy" "static_optimized" {
+  name = "static-content-optimized"
+
+  default_ttl = 86400        # 1 day
+  max_ttl     = 31536000     # 1 year (aggressive caching)
+  min_ttl     = 0
+
+  parameters_in_cache_key_and_forwarded_to_origin {
+
+    cookies_config {
+      cookie_behavior = "none"
+    }
+
+    headers_config {
+      header_behavior = "none"
+    }
+
+    query_strings_config {
+      query_string_behavior = "none"
+    }
+  }
+
+}
+
+
 
 #################################
 # S3 POLICY (ALLOW CLOUDFRONT)
