@@ -174,6 +174,12 @@ resource "aws_cloudfront_distribution" "cdn" {
   depends_on = [aws_acm_certificate_validation.cert_validation]
 }
 
+resource "aws_cloudfront_invalidation" "invalidate_all" {
+  distribution_id = aws_cloudfront_distribution.cdn.id
+
+  paths = ["/*"]
+}
+
 #################################
 # S3 POLICY (ALLOW CLOUDFRONT)
 #################################
